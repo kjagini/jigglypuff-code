@@ -19,6 +19,7 @@ import torch
 from kv_cache_mha import init_kv_cache, multi_head_attention_cached
 from mqa_kv_cache import init_mqa_cache, multi_query_attention_cached
 from gqa_kv_cache import init_gqa_cache, grouped_query_attention_cached
+from cost_model import cost_per_million_tokens
 
 
 def build_weights(D, H, G, device):
@@ -118,11 +119,13 @@ def run(args):
         total_time = total_gen + ttft[-1] / 1000.0
         tokens = B * args.gen_len
         cache_kib = (cache["k"].numel() + cache["v"].numel()) * 4 / 1024
+        tput = tokens / total_time
         return {
             "ttft": statistics.median(ttft),
             "itl": statistics.mean(itl),
-            "tput": tokens / total_time,
+            "tput": tput,
             "cache": cache_kib,
+            "cost": cost_per_million_tokens(tput, args.hourly_usd),
         }
 
     results = {name: time_method(p, s) for name, (p, s) in methods.items()}
@@ -137,6 +140,7 @@ def run(args):
         ("ITL (ms/token)", "itl", "{:.3f}"),
         ("Throughput (tok/s)", "tput", "{:.1f}"),
         ("KV cache, final (KiB)", "cache", "{:.1f}"),
+        (f"Cost / 1M tokens (USD)", "cost", "{:.4f}"),
     ]
     for label, key, fmt in rows:
         print(f"{label:24s}" + "".join(f"{fmt.format(results[n][key]):>22s}" for n in names))
@@ -153,4 +157,6 @@ if __name__ == "__main__":
     p.add_argument("--num-kv-heads", type=int, default=2)
     p.add_argument("--warmup", type=int, default=3)
     p.add_argument("--repeats", type=int, default=10)
+    p.add_argument("--hourly-usd", type=float, default=2.50,
+                   help="assumed hardware price per hour, used for cost per token")
     run(p.parse_args())
